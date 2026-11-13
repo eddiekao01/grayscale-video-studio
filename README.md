@@ -27,7 +27,7 @@ python3.12 -m venv .venv
 ./start.command
 ```
 
-On this Mac, the preexisting Homebrew Python has a broken native XML library dependency. This project uses its own runtime under `.python/`, installed with the local `uv` tool under `.tools/`, leaving system installations unchanged. Keep `.python/` when running the existing environment. If you move the project, recreate `.venv` with a working interpreter.
+On this Mac, the preexisting Homebrew Python has a broken native XML library dependency. This project uses its own runtime under `.python/`, copied from the prepared starter, leaving system installations unchanged. Keep `.python/` when running the existing environment. If you move the project, recreate `.venv` with a working interpreter.
 
 ## Where to code during the interview
 
