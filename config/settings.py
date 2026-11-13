@@ -121,3 +121,11 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Credentials stay on the server; start.command loads the ignored local .env file.
+import os
+TRANSFORM_BASE_URL = os.environ.get('BASE_URL', 'https://interview-studio-lime.vercel.app')
+TRANSFORM_SERVICE_TOKEN = os.environ.get('TRANSFORM_SERVICE_TOKEN', '')
+CSRF_FAILURE_VIEW = 'core.views.csrf_failure'
+
+VIDEO_JOB_ROOT = BASE_DIR / '.tools' / 'video-jobs'

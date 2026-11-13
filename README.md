@@ -1,72 +1,54 @@
-# Django interview starter
+# Grayscale video client
 
-A minimal, working hello-world project for a full-stack interview. Python handles the backend; Django templates, HTML, CSS, and plain JavaScript handle the frontend. SQLite is configured and initialized. No Node.js, Docker, API keys, or separate frontend server needed.
+Django templates + plain JavaScript + SQLite, with a persistent video queue.
 
-This matches the setup described in Jenna's email: an empty project with a working hello-world frontend and backend. The language and framework are agnostic, and an optional interview scaffold may be provided. No interview feature or practice solution is prebuilt here.
-
-## Start on this Mac
-
-The dependencies and a separate Python 3.12 runtime are already installed inside this folder.
+## Run
 
 ```sh
-cd /Users/eddiekao/Desktop/django-interview-starter
 ./start.command
 ```
 
-Open **http://127.0.0.1:8001**. Click **Say hello to the backend** to make a real request to Python. The status below it checks both the backend and a real SQLite query. Press **Ctrl+C** in the terminal to stop the server. You can also double-click `start.command` in Finder. Port 8001 is the default because another app on this Mac already uses port 8000.
+Open http://127.0.0.1:8001. The launcher loads the ignored `.env`, applies migrations, and starts both Django and a six-thread queue worker. The project uses its own `.venv` and `.python` runtime. Restart the launcher after changing worker code; Django's automatic reload only reloads the web server.
 
-If port 8001 is busy, use `PORT=8002 ./start.command` and open http://127.0.0.1:8002.
+On another environment, install `requirements.txt` into a working Python virtual environment. PyAV validates videos; imageio-ffmpeg supplies the FFmpeg executable used for splitting and merging. The local `.env` provides `BASE_URL` and `TRANSFORM_SERVICE_TOKEN`; credentials never reach the browser.
 
-## Setup on another machine
+## Workflow
 
-Use a working Python 3.12 installation (Python 3.10–3.14 also supported by this Django release). Do not copy `.venv`, `.python`, or `.tools` between machines.
+1. Upload and preview a video. Source videos have no application-level size or duration cap. Uploads spill to temporary disk storage and are copied in chunks; the 3 MB file, 3.2 MB multipart request, and ten-second duration limits apply to individual external service clips only.
+2. `POST /api/transform/` validates the upload, saves its source, creates a durable job, and responds with HTTP 202, `video_id`, and `status_url`.
+3. The worker encodes ordered independent MP4 clips, targeting 9.9 seconds to leave a small timing margin below the service's ten-second limit. Every clip is checked for readable frames, duration, and the 3 MB file limit before queueing.
+4. Segment tasks run independently with globally shared limits of six active service calls and twelve starts per rolling second. Upload admission has its own twelve-per-second limit. Successful outputs are saved immediately, even when earlier clips are still processing.
+5. Transient failures retry up to three attempts with backoff. Local rate/concurrency rejections wait without consuming an attempt. A permanently failed clip fails the video; successful siblings are retained.
+6. Once all expected segment records are completed, an atomic state transition publishes one durable merge task. Outputs are loaded by segment order, independent of completion order.
+7. Matching video formats use FFmpeg stream-copy concatenation; incompatible formats use one normalized re-encoding pass. The original audio is restored during final assembly because the external service removes audio. The final file is decoded for validation, atomically published, then marked completed.
+8. The frontend polls status and shows upload progress, splitting, processed clip counts, merging, errors, and the final preview/download next to the original. Result delivery supports HTTP byte ranges for native playback and seeking. Both previews paint decoded video frames onto canvases to avoid blank embedded video surfaces. Accessible Play/Pause, seek, and mute controls operate the underlying decoder, and paused frames remain visible. Reload preview resets decoding without repeating conversion; Open video uses a standalone player. Saved jobs reopen with `/?video=<video_id>`, including the original source preview.
 
-```sh
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-./start.command
-```
+The guaranteed 4 MB service output bound applies to each segment; the assembled video may be larger. The upstream socket timeout is 30 seconds, separate from video duration. Local FFmpeg operations have a five-minute timeout. Splitting re-encodes input to make independent bounded clips, so it adds processing cost and can change visual quality/frame timing slightly.
 
-On this Mac, the preexisting Homebrew Python has a broken native XML library dependency. This project uses its own runtime under `.python/`, copied from the prepared starter, leaving system installations unchanged. Keep `.python/` when running the existing environment. If you move the project, recreate `.venv` with a working interpreter.
+## Durable bookkeeping
 
-## Where to code during the interview
+- `VideoJob`: UUID, status, expected segment count, source/final locations, error, worker PID, merge attempts.
+- `VideoSegment`: video ID, segment order, status, input/output locations, attempts, retry time, error, worker PID.
+- Unique `(video_id, segment_order)` prevents duplicate segment records. Queue emptiness is never used to infer success.
+- Completed clips survive worker restarts. Claims owned by exited processes are requeued; a pending merge is recoverable without another service call.
+- Files remain under ignored `.tools/video-jobs/`. Successful and failed assets are retained for recovery; automatic retention cleanup is not implemented.
 
-| File | Purpose |
-| --- | --- |
-| `core/views.py` | Python request handlers and JSON endpoints |
-| `core/urls.py` | URL routes |
-| `core/models.py` | Add database models when the prompt calls for them |
-| `core/templates/core/home.html` | Frontend HTML / Django template |
-| `core/static/core/app.js` | Browser behavior and API requests |
-| `core/static/core/styles.css` | Styling |
-| `config/settings.py` | Project configuration and SQLite database |
-| `core/tests.py` | Checks for the scaffold |
+The queue and limiter assume all worker processes share SQLite and the same machine/filesystem. This is a local development design. A multi-host deployment would need shared storage and a suitable shared queue/limiter. No database transaction is held across a service call or FFmpeg operation.
 
-Request flow: browser → URL route → Python view → HTML or JSON response. JavaScript's `fetch()` calls `/api/hello/` on the same server, so no CORS configuration is necessary.
+## Endpoints
 
-### Current endpoints
+- `GET /`: upload interface.
+- `POST /api/transform/`: multipart `clip` upload with Django CSRF protection; returns a queued job or JSON error.
+- `GET /api/videos/<video_id>/`: status, completed/expected segment counts, error, and final URL when ready.
+- `GET /api/videos/<video_id>/source/`: original source for restored previews, with byte-range support.
+- `GET /api/videos/<video_id>/result/`: final MP4; returns 409 while unfinished.
+- Original `/api/hello/`, `/api/health/`, and `/admin/` remain available.
 
-- `GET /`: renders the frontend.
-- `GET /api/hello/`: returns `{"message": "Hello, world! From your Python backend."}`.
-- `GET /api/health/`: runs `SELECT 1` in SQLite and returns `{"status": "ok", "database": "connected"}`; returns 503 if the database connection fails.
-- `/admin/`: standard Django admin; create a user only if needed with `.venv/bin/python manage.py createsuperuser`.
-
-### Useful commands
-
-Run these from this folder, in a second terminal if the server is running:
+## Checks
 
 ```sh
 .venv/bin/python manage.py check
 .venv/bin/python manage.py test
-.venv/bin/python manage.py makemigrations  # after adding/changing models
-.venv/bin/python manage.py migrate
-.venv/bin/python manage.py shell
 ```
 
-Python changes reload automatically. Refresh the browser after changing templates, CSS, or JavaScript. Future POST forms should include `{% csrf_token %}`; future JavaScript writes should send Django's CSRF token in the `X-CSRFToken` header. Standard CSRF middleware remains enabled.
-
-Before the interview, start the server, click the hello button, check the green database status, and keep the project open in your editor. The launch script automatically applies migrations.
-
-This is a local development scaffold: debug mode, a development-only secret key, and Django's development server. Runtime folders and the local database are excluded from Git; `requirements.txt` pins installed dependencies for reproducible setup.
-
-Official reference: [Django 5.2 tutorial](https://docs.djangoproject.com/en/5.2/intro/tutorial01/).
+To run components separately after applying migrations, use `manage.py runserver 127.0.0.1:8001` and `manage.py process_videos` in separate terminals with the same environment. Both must be running for queued jobs to progress.
