@@ -52,3 +52,9 @@ The queue and limiter assume all worker processes share SQLite and the same mach
 ```
 
 To run components separately after applying migrations, use `manage.py runserver 127.0.0.1:8001` and `manage.py process_videos` in separate terminals with the same environment. Both must be running for queued jobs to progress.
+
+## Test coverage
+
+The automated suite generates tiny real videos locally and mocks external HTTP, so it requires no token or service availability. It covers source/clip boundaries, spoofed and audio-only uploads, CSRF, multipart/authentication contracts, upstream failures and output bounds, retry backoff and exhaustion, dead-worker recovery, duplicate merge prevention, decoded frame ordering, audio restoration, format normalization, and exact byte-range delivery.
+
+Concurrency probes use separate processes and private temporary SQLite databases to verify six simultaneous slots, twelve admissions under sixteen simultaneous requests, and fast completion without waiting for a slow request. They never access the live job database. Browser painting remains a manual browser check; backend tests cannot establish that an embedded player renders correctly.

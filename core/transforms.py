@@ -159,7 +159,11 @@ def call_transform_service(data):
         raise TransformError(f'The transformation service rejected the request (HTTP {exc.code}).', 502)
     except (TimeoutError, socket.timeout):
         raise TransformError('The transformation service timed out. Please retry.', 504)
-    except (URLError, OSError):
+    except URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            raise TransformError('The transformation service timed out. Please retry.', 504)
+        raise TransformError('Could not reach the transformation service. Please retry.', 502)
+    except OSError:
         raise TransformError('Could not reach the transformation service. Please retry.', 502)
 
 
